@@ -1,10 +1,10 @@
 extends Node3D
-
+ 
 const Models = preload("res://scripts/models.gd")
 const PlayerScript = preload("res://scripts/player.gd")
 const CannibalScript = preload("res://scripts/cannibal.gd")
 const HudScript = preload("res://scripts/hud.gd")
-
+ 
 const DAY_SECONDS := 300.0   # one full day+night cycle (seconds)
 const DAY_FRAC := 0.6        # fraction of the cycle that is daylight
 const SPAWN_T := 0.66        # time of day when cannibals start to appear
@@ -12,13 +12,13 @@ const TREE_COUNT := 260
 const ROCK_COUNT := 70
 const BUSH_COUNT := 55
 const BED_OFFSET := Vector3(-2.2, 0.0, -1.0)
-
+ 
 var noise := FastNoiseLite.new()
 var t: float = 0.05          # 0 = sunrise, DAY_FRAC = sunset, 1 = next sunrise
 var day_count: int = 1
 var game_time: float = 0.0
 var night_amt: float = 0.0
-
+ 
 var player
 var hud
 var cabin: Node3D
@@ -30,7 +30,7 @@ var sky_mat: ProceduralSkyMaterial
 var window_mat: StandardMaterial3D
 var lamp: OmniLight3D
 var fire_light: OmniLight3D
-
+ 
 var night_spawned: bool = false
 var dusk_warned: bool = false
 var spawn_left: int = 0
@@ -39,7 +39,7 @@ var respawn_timer: float = -1.0
 var scan_timer: float = 0.0
 var ctx: String = ""
 var ctx_index: int = -1
-
+ 
 var tree_pos: Array[Vector3] = []
 var tree_ready: Array[float] = []
 var rock_pos: Array[Vector3] = []
@@ -49,8 +49,8 @@ var bush_ready: Array[float] = []
 var bush_hidden: Array[bool] = []
 var berry_mm: MultiMesh
 var berry_xf: Array[Transform3D] = []
-
-
+ 
+ 
 func _ready() -> void:
 	randomize()
 	noise.seed = 1337
@@ -58,28 +58,48 @@ func _ready() -> void:
 	noise.fractal_octaves = 3
 	_setup_environment()
 	_build_terrain()
+	_build_river()
 	_build_forest()
 	_build_cabin()
 	_build_hud()
 	_spawn_player()
 	hud.show_msg("به جنگل خوش آمدی! پیش از غروب منابع جمع کن.", 6.0)
 	_update_daynight()
-
-
+ 
+ 
 # ------------------------------------------------------------------ world
-
+ 
 func height_at(x: float, z: float) -> float:
+	# A shallow, walkable river valley crosses the eastern forest.
+	if absf(x - 26.0) < 3.2 and absf(z) < 72.0:
+		return -0.45
 	var d := Vector2(x, z).length()
 	var h := noise.get_noise_2d(x, z) * 9.0
 	h *= smoothstep(12.0, 35.0, d)
 	h += smoothstep(82.0, 116.0, d) * 40.0
 	return h
-
-
+ 
+ 
 func _dist2(a: Vector3, b: Vector3) -> float:
 	return Vector2(a.x - b.x, a.z - b.z).length()
-
-
+ 
+ 
+func _build_river() -> void:
+	var water := MeshInstance3D.new()
+	water.name = "RiverWater"
+	var mesh := PlaneMesh.new()
+	mesh.size = Vector2(5.8, 144.0)
+	water.mesh = mesh
+	water.position = Vector3(26.0, -0.20, 0.0)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.08, 0.34, 0.48, 0.78)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.metallic = 0.12
+	mat.roughness = 0.22
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	water.material_override = mat
+	add_child(water)
+ 
 func _setup_environment() -> void:
 	sky_mat = ProceduralSkyMaterial.new()
 	var sky := Sky.new()
@@ -94,20 +114,20 @@ func _setup_environment() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
-
+ 
 	sun = DirectionalLight3D.new()
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 70.0
 	add_child(sun)
-
+ 
 	moon = DirectionalLight3D.new()
 	moon.light_color = Color(0.55, 0.65, 1.0)
 	moon.light_energy = 0.0
 	moon.rotation_degrees = Vector3(-50.0, 150.0, 0.0)
 	add_child(moon)
-
-
+ 
+ 
 func _ground_color(avg: float, pos: Vector3) -> Color:
 	var n := noise.get_noise_2d(pos.x * 3.1, pos.z * 3.1) * 0.5 + 0.5
 	var c := Color(0.20, 0.38, 0.14).lerp(Color(0.30, 0.46, 0.16), n)
@@ -119,8 +139,8 @@ func _ground_color(avg: float, pos: Vector3) -> Color:
 	if avg > 28.0:
 		c = c.lerp(Color(0.92, 0.94, 0.97), clampf((avg - 28.0) / 6.0, 0.0, 1.0))
 	return c
-
-
+ 
+ 
 func _tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
 	var col := _ground_color((a.y + b.y + c.y) / 3.0, (a + b + c) / 3.0)
 	st.set_color(col)
@@ -129,8 +149,8 @@ func _tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
 	st.add_vertex(b)
 	st.set_color(col)
 	st.add_vertex(c)
-
-
+ 
+ 
 func _build_terrain() -> void:
 	var cells := 110
 	var world_size := 240.0
@@ -149,7 +169,7 @@ func _build_terrain() -> void:
 			_tri(st, p10, p11, p01)
 	st.generate_normals()
 	var mesh := st.commit()
-
+ 
 	var m := StandardMaterial3D.new()
 	m.vertex_color_use_as_albedo = true
 	m.vertex_color_is_srgb = true
@@ -159,7 +179,7 @@ func _build_terrain() -> void:
 	mi.mesh = mesh
 	mi.material_override = m
 	add_child(mi)
-
+ 
 	var body := StaticBody3D.new()
 	var cs := CollisionShape3D.new()
 	var shape := mesh.create_trimesh_shape()
@@ -167,8 +187,8 @@ func _build_terrain() -> void:
 	cs.shape = shape
 	body.add_child(cs)
 	add_child(body)
-
-
+ 
+ 
 func _make_multimesh(mesh: Mesh, material: Material, xforms: Array, colors: Array, cast_shadow: bool = true) -> MultiMeshInstance3D:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -186,14 +206,14 @@ func _make_multimesh(mesh: Mesh, material: Material, xforms: Array, colors: Arra
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mmi)
 	return mmi
-
-
+ 
+ 
 func _build_forest() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 20261029
 	var solid := StaticBody3D.new()
 	add_child(solid)
-
+ 
 	# trees
 	var trunk_x: Array[Transform3D] = []
 	var leaf_x: Array[Transform3D] = []
@@ -235,7 +255,7 @@ func _build_forest() -> void:
 	leaf_mat.vertex_color_use_as_albedo = true
 	leaf_mat.roughness = 0.95
 	_make_multimesh(Models.tree_leaf_mesh(), leaf_mat, leaf_x, leaf_c)
-
+ 
 	# rocks
 	var rock_x: Array[Transform3D] = []
 	var rock_c: Array[Color] = []
@@ -265,7 +285,7 @@ func _build_forest() -> void:
 	rock_mat.vertex_color_use_as_albedo = true
 	rock_mat.roughness = 1.0
 	_make_multimesh(Models.rock_mesh(), rock_mat, rock_x, rock_c)
-
+ 
 	# berry bushes
 	var bush_x: Array[Transform3D] = []
 	var bush_c: Array[Color] = []
@@ -293,8 +313,8 @@ func _build_forest() -> void:
 	_make_multimesh(Models.bush_mesh(), bush_mat, bush_x, bush_c)
 	var berries := _make_multimesh(Models.sph(0.075, 6, 3), Models.mat(Color(0.8, 0.05, 0.1), 0.4), berry_xf, [], false)
 	berry_mm = berries.multimesh
-
-
+ 
+ 
 func _set_berries_visible(i: int, vis: bool) -> void:
 	for k in 4:
 		var idx := i * 4 + k
@@ -302,8 +322,8 @@ func _set_berries_visible(i: int, vis: bool) -> void:
 			berry_mm.set_instance_transform(idx, berry_xf[idx])
 		else:
 			berry_mm.set_instance_transform(idx, Transform3D(Basis().scaled(Vector3(0.001, 0.001, 0.001)), berry_xf[idx].origin))
-
-
+ 
+ 
 func _build_cabin() -> void:
 	cabin = Models.build_cabin()
 	cabin.position = cabin_pos
@@ -311,8 +331,8 @@ func _build_cabin() -> void:
 	lamp = cabin.get_node("Lamp")
 	fire_light = cabin.get_node("FireLight")
 	window_mat = cabin.get_meta("window_mat")
-
-
+ 
+ 
 func _build_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
@@ -321,8 +341,8 @@ func _build_hud() -> void:
 	hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(hud)
-
-
+ 
+ 
 func _spawn_player() -> void:
 	player = CharacterBody3D.new()
 	player.set_script(PlayerScript)
@@ -331,29 +351,29 @@ func _spawn_player() -> void:
 	player.position = cabin_pos + Vector3(0.0, 0.6, 4.6)
 	player.died.connect(_on_player_died)
 	add_child(player)
-
-
+ 
+ 
 # ------------------------------------------------------------------ day / night
-
+ 
 func _sun_height() -> float:
 	if t < DAY_FRAC:
 		return sin(PI * t / DAY_FRAC)
 	return -sin(PI * (t - DAY_FRAC) / (1.0 - DAY_FRAC))
-
-
+ 
+ 
 func _update_daynight() -> void:
 	var h: float = _sun_height()
 	var day_f: float = clampf(h * 3.0, 0.0, 1.0)
 	var night_f: float = clampf(-h * 4.0, 0.0, 1.0)
 	night_amt = night_f
-
+ 
 	sun.rotation_degrees = Vector3(-(8.0 + maxf(h, 0.0) * 62.0), -35.0, 0.0)
 	sun.light_energy = day_f * 1.25
 	sun.light_color = Color(1.0, 0.55, 0.3).lerp(Color(1.0, 0.96, 0.88), day_f)
 	sun.visible = h > -0.05
 	moon.light_energy = night_f * 0.35
 	moon.visible = night_f > 0.02
-
+ 
 	var dusk_top := Color(0.30, 0.22, 0.42)
 	var dusk_hor := Color(0.95, 0.50, 0.28)
 	var day_top := Color(0.22, 0.46, 0.85)
@@ -375,8 +395,8 @@ func _update_daynight() -> void:
 	env.ambient_light_color = Color(0.09, 0.11, 0.19).lerp(Color(0.55, 0.60, 0.70), clampf((h + 0.1) * 2.5, 0.0, 1.0))
 	env.fog_light_color = hor
 	env.fog_density = lerpf(0.010, 0.024, night_f)
-
-
+ 
+ 
 func _begin_day() -> void:
 	day_count += 1
 	night_spawned = false
@@ -385,17 +405,19 @@ func _begin_day() -> void:
 	for e in get_tree().get_nodes_in_group("cannibals"):
 		e.queue_free()
 	hud.show_msg("صبح شد — روز %d" % day_count, 4.0)
-
-
+ 
+ 
 func _sleep() -> void:
 	t = 0.0
 	player.hp = minf(player.max_hp, player.hp + 40.0)
 	player.hunger = maxf(10.0, player.hunger - 12.0)
+	player.thirst = maxf(35.0, player.thirst - 8.0)
+	player.fatigue = 0.0
 	_begin_day()
-
-
+ 
+ 
 # ------------------------------------------------------------------ cannibals
-
+ 
 func _spawn_cannibal() -> void:
 	var c = CharacterBody3D.new()
 	c.set_script(CannibalScript)
@@ -412,18 +434,18 @@ func _spawn_cannibal() -> void:
 	c.speed = minf(3.2 + day_count * 0.1, 4.6)
 	c.killed.connect(_on_cannibal_killed)
 	add_child(c)
-
-
+ 
+ 
 func _on_cannibal_killed(_pos: Vector3) -> void:
 	player.inv["meat"] += 1
 	hud.show_msg("+1 گوشت", 1.2)
-
-
+ 
+ 
 func _on_player_died() -> void:
 	hud.dead_screen = true
 	respawn_timer = 4.0
-
-
+ 
+ 
 func _respawn_player() -> void:
 	hud.dead_screen = false
 	for k in ["wood", "stone", "fruit", "meat"]:
@@ -432,10 +454,10 @@ func _respawn_player() -> void:
 	t = 0.0
 	_begin_day()
 	hud.show_msg("در کلبه بیدار شدی... نیمی از منابعت از دست رفت.", 5.0)
-
-
+ 
+ 
 # ------------------------------------------------------------------ loop
-
+ 
 func _process(delta: float) -> void:
 	game_time += delta
 	t += delta / DAY_SECONDS
@@ -444,7 +466,7 @@ func _process(delta: float) -> void:
 		_begin_day()
 	_update_daynight()
 	_update_events(delta)
-
+ 
 	if hud.consume_interact():
 		_do_interact()
 	if hud.consume_eat():
@@ -452,11 +474,11 @@ func _process(delta: float) -> void:
 	_update_scan(delta)
 	_update_hud()
 	_flicker()
-
+ 
 	if player.global_position.y < -15.0:
 		player.global_position = cabin_pos + Vector3(0.0, 1.0, 4.6)
-
-
+ 
+ 
 func _update_events(delta: float) -> void:
 	if not dusk_warned and t >= 0.5 and t < SPAWN_T:
 		dusk_warned = true
@@ -476,8 +498,8 @@ func _update_events(delta: float) -> void:
 		respawn_timer -= delta
 		if respawn_timer <= 0.0:
 			_respawn_player()
-
-
+ 
+ 
 func _update_scan(delta: float) -> void:
 	scan_timer -= delta
 	if scan_timer > 0.0:
@@ -495,6 +517,9 @@ func _update_scan(delta: float) -> void:
 	if player.in_cabin:
 		if t >= DAY_FRAC and _dist2(p, cabin_pos + BED_OFFSET) < 3.4:
 			ctx = "sleep"
+		return
+	if absf(p.x - 26.0) < 4.2 and absf(p.z) < 70.0:
+		ctx = "water"
 		return
 	var best := 2.4
 	for i in bush_pos.size():
@@ -518,12 +543,14 @@ func _update_scan(delta: float) -> void:
 				best = d3
 				ctx = "rock"
 				ctx_index = i
-
-
+ 
+ 
 func _hint_for(c: String) -> String:
 	match c:
 		"sleep":
 			return "خواب تا صبح"
+		"water":
+			return "نوشیدن آب رودخانه"
 		"berry":
 			return "برداشت میوه"
 		"wood":
@@ -531,14 +558,17 @@ func _hint_for(c: String) -> String:
 		"rock":
 			return "جمع‌آوری سنگ"
 	return ""
-
-
+ 
+ 
 func _do_interact() -> void:
 	if player.dead or ctx == "":
 		return
 	match ctx:
 		"sleep":
 			_sleep()
+		"water":
+			player.drink_water()
+			hud.show_msg("آب نوشیدی؛ تشنگی کمتر شد.", 1.8)
 		"berry":
 			bush_ready[ctx_index] = game_time + 90.0
 			bush_hidden[ctx_index] = true
@@ -555,8 +585,8 @@ func _do_interact() -> void:
 			hud.show_msg("+1 سنگ", 1.2)
 	ctx = ""
 	ctx_index = -1
-
-
+ 
+ 
 func _do_eat() -> void:
 	if player.dead:
 		return
@@ -564,12 +594,14 @@ func _do_eat() -> void:
 		hud.show_msg("میوه خوردی: سیری و جان بیشتر شد", 1.5)
 	else:
 		hud.show_msg("میوه‌ای نداری", 1.5)
-
-
+ 
+ 
 func _update_hud() -> void:
 	var inv: Dictionary = player.inv
 	hud.hp_frac = player.hp / player.max_hp
 	hud.hunger_frac = player.hunger / 100.0
+	hud.thirst_frac = player.thirst / 100.0
+	hud.fatigue_frac = player.fatigue / 100.0
 	hud.inv_text = "چوب: %d   سنگ: %d   میوه: %d   گوشت: %d" % [inv["wood"], inv["stone"], inv["fruit"], inv["meat"]]
 	hud.day_text = "روز %d" % day_count
 	hud.time_frac = t
@@ -583,8 +615,8 @@ func _update_hud() -> void:
 		var yaw: float = player.yaw
 		var fwd := Vector2(-sin(yaw), -cos(yaw))
 		hud.compass_angle = fwd.angle_to(tv.normalized())
-
-
+ 
+ 
 func _flicker() -> void:
 	fire_light.light_energy = 1.7 + sin(game_time * 13.0) * 0.25 + sin(game_time * 7.3) * 0.2
 	lamp.light_energy = lerpf(0.5, 1.1, night_amt)
